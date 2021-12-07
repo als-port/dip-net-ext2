@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-dip
+  labels:
+    app: app-dip
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app-dip
+  template:
+    metadata:
+      labels:
+        app: app-dip
+    spec:
+      containers:
+      - name: app-dip
+        image: alsxs/nginx:latest
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: app-dip
+  name: app-dip
+
+spec:
+  type: LoadBalancer
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  selector:
+    app: app-dip

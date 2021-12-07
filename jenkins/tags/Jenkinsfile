@@ -1,0 +1,91 @@
+pipeline {
+    agent {
+        kubernetes{
+            label 'agent'
+        }
+    }
+    triggers {
+        GenericTrigger(
+             genericVariables: [
+              [key: 'ref', value: '$.ref'],
+              [key: 'tag', value: '$.ref', regexpFilter: 'refs/tags/'],
+             ],
+
+             causeString: 'pushed tag $tag',
+
+             printContributedVariables: true,
+             printPostContent: true,
+
+             regexpFilterText: '$ref',
+             regexpFilterExpression: '^refs/tags/.*'
+            )
+    }
+    environment {
+		DOCKERHUB_CREDENTIALS=credentials('879885ca-4b90-4633-8803-9d6dbe8d7c53')
+	}
+    stages {
+
+	    stage('gitclone') {
+            when {
+                branch 'main'
+            }
+			steps {
+			    echo " ============== gitclone ==================="
+                git 'https://github.com/alsxs/dip-net-ext2.git'
+                sh 'git checkout main'
+			}
+		}
+
+		stage('Build') {
+			steps {
+			    script {
+			            COMMIT_TAG = sh(returnStdout: true, script: 'git rev-list -n 1 $tag').trim()
+                        BRANCH_TAG = sh(returnStdout: true, script: "git name-rev --name-only --exclude=tags/* ${COMMIT_TAG}").trim()
+			            if( "${BRANCH_TAG}" == "remotes/origin/main") {
+                            echo " ============== Build ================== "
+                            echo "BRANCH_TAG: ${BRANCH_TAG}"
+                            echo "COMMIT_TAG: ${COMMIT_TAG}"
+                            dir ('app') {
+                                sh 'git checkout $COMMIT_TAG'
+                                sh 'sudo docker build -t alsxs/nginx:app_v$tag .'
+                            }
+                        } else {
+                            currentBuild.result = 'FAILURE'
+                            error "Invalid branch name, end of pipeline"
+
+                        }
+                }
+
+			}
+		}
+
+		stage('Login + push') {
+
+			steps {
+			    echo " ============== Dockerhub login + push =================="
+				sh 'echo $DOCKERHUB_CREDENTIALS_PSW | sudo docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+				sh 'sudo docker tag alsxs/nginx:app_v$tag alsxs/nginx:app_v$tag'
+				sh 'sudo docker push alsxs/nginx:app_v$tag'
+			}
+		}
+
+		stage('Kubernetes') {
+            steps {
+                echo " ============== Change app-deploy =================="
+                withKubeConfig([credentialsId: 'e098f8f3-4d8d-4977-8055-8cdc1341ab55',
+                    serverUrl: 'https://kubernetes.default:443',
+                    contextName: 'kubernetes-admin@cluster.local',
+                    clusterName: 'cluster.local',
+                    namespace: 'default'
+                    ]) {
+                        sh 'kubectl delete deploy app-dip'
+                        sh 'cat kube/kube_app.yaml | sed s/latest/app_v$tag/g | kubectl apply -f -'
+                }
+            }
+        }
+    }
+}
+
+
+
+
